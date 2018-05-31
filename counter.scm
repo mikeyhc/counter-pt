@@ -3,9 +3,11 @@
 (import
   (chibi show)
   (chibi sqlite3)
+  (chibi time)
   (scheme small)
   (srfi 1)
   (srfi 26)
+  (srfi 115)
   (srfi 130))
 
 (define ctx #f)
@@ -27,13 +29,31 @@
      (show #f "meal:" (cadr ctx) ":" (caddr ctx)))
     (else "?")))
 
-;; TODO: verify date
+(define (now-stamp)
+  (let ((now (seconds->time (current-seconds))))
+   (show
+     #f
+     (with ((pad-char #\0))
+           (padded/left 4 (+ 1900 (time-year now))) "-"
+           (padded/left 2 (+ 1 (time-month now))) "-"
+           (padded/left 2 (time-day now))))))
+
+(define (process-date str)
+  (let ((date (if (string=? str "now") (now-stamp) str))
+        (date-regex (rx (= 4 num) "-" (= 2 num) "-" (= 2 num))))
+    (if (regexp-match? (regexp-matches date-regex date))
+      date
+      #f)))
+
 (define (process-meal tokens)
   (if (or (null? tokens) (null? (cdr tokens)))
     (show #t "no meal or date provided for meal mode" nl)
     (let ((meal (string-join (cdr tokens) " ")))
      (if (find (cut string=? meal <>) meals)
-       (set! ctx (list 'meal (car tokens) meal))
+       (let ((date (process-date (car tokens))))
+         (if date
+           (set! ctx (list 'meal date  meal))
+           (show #t "invalid date \"" (car tokens) "\"" nl)))
        (show #t "invalid meal " meal nl)))))
 
 (define (process-mode tokens)
