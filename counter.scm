@@ -1,5 +1,8 @@
 #!/usr/bin/env chibi-scheme
 
+;; TODO: reload just opens a new REPL, need to separate logic out so I can
+;; make a reloadable REPL
+
 (import
   (chibi show)
   (chibi sqlite3)
@@ -27,6 +30,7 @@
     ((eq? ctx 'product) "product")
     ((and (list? ctx) (eq? (car ctx) 'meal))
      (show #f "meal:" (cadr ctx) ":" (caddr ctx)))
+    ((eq? ctx 'report) "report")
     (else "?")))
 
 (define (now-stamp)
@@ -42,6 +46,7 @@
   (let ((date (if (string=? str "now") (now-stamp) str))
         (date-regex (rx (= 4 num) "-" (= 2 num) "-" (= 2 num))))
     (if (regexp-match? (regexp-matches date-regex date))
+      ;; TODO: check for invalid values
       date
       #f)))
 
@@ -53,7 +58,8 @@
        (let ((date (process-date (car tokens))))
          (if date
            (set! ctx (list 'meal date  meal))
-           (show #t "invalid date \"" (car tokens) "\"" nl)))
+           (show #t "invalid date \"" (car tokens) "\" (expected yyyy-mm-dd)"
+                 nl)))
        (show #t "invalid meal " meal nl)))))
 
 (define (process-mode tokens)
@@ -61,6 +67,7 @@
     ((null? tokens) (set! ctx #f))
     ((string=? (car tokens) "product") (set! ctx 'product))
     ((string=? (car tokens) "meal") (process-meal (cdr tokens)))
+    ((string=? (car tokens) "report") (set! ctx 'report))
     (else
       (show #t "unknown mode: \"" (escaped (car tokens)) "\"" nl))))
 
@@ -127,6 +134,44 @@
            (quantity (prompt "quantity (g/ml)?")))
       (add-meal-item (caddr ctx) (cadr ctx) name quantity))))
 
+(define (show-report)
+  (define (to-string x)
+    (cond
+      ((number? x) (number->string x))
+      ((eq? x 'NULL) "")
+      (else x)))
+
+  (define (show-row row)
+    (show #t (string-join (map to-string (vector->list row)) ",") nl))
+
+  (show #t "name,quantity,energy (kJ),fat,carbohydrates,fiber,protein,salt" nl)
+  (for-each
+    show-row
+    ;; TODO: use ssql
+    (sqlite3-select
+      db
+      "SELECT
+        product,
+        quantity,
+        (energy / 100.0 * quantity),
+        (fat / 100.0 * quantity),
+        (carbohydrates / 100.0 * quantity),
+        (fiber / 100.0 * quantity),
+        (protein / 100.0 * quantity)
+      FROM
+        meal_items
+      LEFT JOIN
+        products
+      ON
+        product = name
+      ORDER BY
+        date")))
+
+(define (write-report tokens)
+  (if (null? tokens)
+    (show-report)
+    (with-output-to-file (string-join tokens " ") show-report)))
+
 (define (process-product-command tokens)
   (cond
     ((string=? (car tokens) "add") (add-product-repl (cdr tokens)))
@@ -138,10 +183,16 @@
     ((string=? (car tokens) "add") (add-meal-item-repl (cdr tokens)))
     (else (show #t "unknown meal command \"" (car tokens) "\"" nl))))
 
+(define (process-report-command tokens)
+  (cond
+    ((string=? (car tokens) "write") (write-report (cdr tokens)))
+    (else (show #t "unknown report command \"" (car tokens) "\"" nl))))
+
 (define (process-command tokens)
   (cond
     ((not ctx) (show #t "no context set!" nl))
     ((eq? ctx 'product) (process-product-command tokens))
+    ((eq? ctx 'report) (process-report-command tokens))
     ((and (list ctx) (eq? (car ctx) 'meal)) (process-meal-command tokens))
     (else (show #t "invalid context \"" ctx "\"" nl))))
 
@@ -150,6 +201,7 @@
    (cond
      ((null? tokens) (show #t "no command provided" nl))
      ((string=? (car tokens) "mode") (process-mode (cdr tokens)))
+     ((string=? (car tokens) "reload") (load "./counter.scm"))
      ((string=? (car tokens) "quit") (exit 0))
      (else (process-command tokens)))))
 
